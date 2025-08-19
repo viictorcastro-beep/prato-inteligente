@@ -1,39 +1,42 @@
-const express = require("express");
-const cors = require("cors");
-// Node 22 já tem fetch nativo → não precisa do node-fetch
-
+import express from "express";
+import cors from "cors";
+import path from "path";
 
 const app = express();
+const PORT = process.env.PORT || 3000;
+const __dirname = process.cwd();
+
 app.use(cors());
 app.use(express.json());
-
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY; // defina no ambiente
-const GEMINI_MODEL  = "gemini-2.0-flash";
+app.use(express.static("public")); // serve o public/index.html e assets
 
 app.post("/api/analisar-refeicao", async (req, res) => {
+  const { prompt } = req.body;
+  if (!prompt) return res.status(400).json({ ok: false, error: "prompt vazio" });
+
   try {
-    const { prompt } = req.body;
-    if (!prompt) return res.status(400).json({ error: "Prompt ausente" });
+    const resp = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${process.env.GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: prompt }]}]
+        })
+      }
+    );
 
-    const url = `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-    const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
-
-    const r = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload)
-    });
-
-    if (!r.ok) {
-      return res.status(r.status).json({ error: "Gemini falhou", detail: await r.text() });
-    }
-
-    const data = await r.json();
-    const text = data?.candidates?.[0]?.content?.parts?.[0]?.text || "Sem resposta";
+    const j = await resp.json();
+    const text = j?.candidates?.[0]?.content?.parts?.[0]?.text || "Sem resposta do modelo.";
     res.json({ ok: true, text });
   } catch (e) {
-    res.status(500).json({ error: "server_error", detail: String(e) });
+    res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.listen(3000, () => console.log("🚀 API rodando em http://localhost:3000"));
+// fallback pra abrir o app no "/"
+app.get("*", (_, res) => {
+  res.sendFile(path.join(__dirname, "public", "index.html"));
+});
+
+app.listen(PORT, () => console.log(`Server rodando na porta ${PORT}`));
