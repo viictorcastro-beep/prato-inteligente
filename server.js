@@ -1,45 +1,49 @@
-// server.js (CommonJS, funciona no Windows/Node 22)
-const express = require('express');
-const cors = require('cors');
-const path = require('path');
+const express = require("express");
+const cors = require("cors");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.use(cors());
 app.use(express.json());
+app.use(cors());
+app.use(express.static("public"));
 
-// Servir os arquivos estáticos do front
-app.use(express.static(path.join(__dirname, 'public')));
-app.get('/', (_req, res) => {
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
-});
+const MODEL = process.env.GEMINI_MODEL || "gemini-1.5-flash"; // modelo estável
 
-// Endpoint que chama a Gemini
-app.post('/api/analisar-refeicao', async (req, res) => {
+app.post("/api/analisar-refeicao", async (req, res) => {
   const { prompt } = req.body || {};
-  if (!prompt) return res.status(400).json({ ok: false, error: 'prompt vazio' });
+  if (!prompt) return res.status(400).json({ ok: false, error: "prompt vazio" });
+  if (!process.env.GEMINI_API_KEY) {
+    return res.status(500).json({ ok: false, error: "GEMINI_API_KEY não configurada" });
+  }
 
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${apiKey}`;
-
-    // Node 22 já tem fetch global (não precisa de node-fetch)
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${process.env.GEMINI_API_KEY}`;
     const r = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ role: 'user', parts: [{ text: prompt }]}]
-      })
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }]}] })
     });
 
     const j = await r.json();
-    const text = j?.candidates?.[0]?.content?.parts?.[0]?.text || 'Sem resposta do modelo.';
-    res.json({ ok: true, text });
+
+    // Se a API respondeu erro, propague-o para o front
+    if (!r.ok) {
+      console.error("Gemini ERROR:", j);
+      return res.status(r.status).json({ ok: false, error: j?.error?.message || "Erro na API Gemini" });
+    }
+
+    const text = j?.candidates?.[0]?.content?.parts?.[0]?.text;
+    if (!text) {
+      console.error("Gemini sem texto:", j);
+      return res.status(502).json({ ok: false, error: "Sem texto na resposta do modelo" });
+    }
+
+    return res.json({ ok: true, text });
   } catch (e) {
     console.error(e);
-    res.status(500).json({ ok: false, error: e.message });
+    return res.status(500).json({ ok: false, error: e.message });
   }
 });
 
-app.listen(PORT, () => console.log(`Servidor rodando na porta ${PORT}`));
+app.listen(process.env.PORT || 3000, () =>
+  console.log("Server rodando na porta", process.env.PORT || 3000)
+);
